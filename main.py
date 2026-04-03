@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
+import asyncio
 
 from parser import parse_2_columns
 from compare import compare_items
@@ -44,12 +45,25 @@ def root():
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     try:
-        input_data = parse_2_columns(file.file)
+        # 🔥 đọc file async (tránh block)
+        contents = await file.read()
+
+        # 👉 ghi ra temp file để parser đọc
+        temp_path = "temp.xlsx"
+        with open(temp_path, "wb") as f:
+            f.write(contents)
+
+        # 👉 chạy parsing ở thread riêng (tránh block CPU)
+        input_data = await asyncio.to_thread(parse_2_columns, temp_path)
 
         print("INPUT:", len(input_data))
         print("MASTER:", len(MASTER_DATA))
 
-        result = compare_items(input_data, MASTER_DATA)
+        # 👉 compare cũng chạy thread
+        result = await asyncio.to_thread(compare_items, input_data, MASTER_DATA)
+
+        # 👉 xóa file temp
+        os.remove(temp_path)
 
         return {
             "success": True,
@@ -59,6 +73,7 @@ async def upload_file(file: UploadFile = File(...)):
         }
 
     except Exception as e:
+        print("ERROR:", str(e))
         return {
             "success": False,
             "error": str(e)
@@ -69,3 +84,4 @@ async def upload_file(file: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000)
+
